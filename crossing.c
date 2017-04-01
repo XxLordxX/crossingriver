@@ -43,7 +43,8 @@ int _hackers = 0;
 /* Creates a new person */
 void newPerson(person *p, int id) {
     p->type = rand() % 2;
-    p->waiting = rand() % 10;
+    //p->waiting = rand() % 10;
+    p->waiting = 5;
     p->id = id;
 }
 
@@ -51,6 +52,7 @@ void newPerson(person *p, int id) {
 void showqueue() {
    printf("Serf queue size: %d\n", _serfs);
    printf("Hacker queue size: %d\n\n", _hackers);
+   sleep(3);
 }
 
 
@@ -67,12 +69,14 @@ void setsail() {
 void serfboard() {
     sem_post(&serf_queue);
     printf("Serf boarded\n");
+    sleep(1);
     _serfsb++;
 }
 
 void hackerboard() {
     sem_post(&hacker_queue);
     printf("Hacker boarded\n");
+    sleep(1);
     _hackersb++;
 }
 
@@ -80,12 +84,14 @@ void serfjoin() {
     /* Waits if ship is free to join */
     sem_wait(&mutex);
     printf("Serf joined\n");
+    sleep(3);
 
     /* Verifies boarding count */
     if (_serfs == 3) {
         _serfs -= 3;
 
         printf("Serf boarded\n");
+        sleep(1);
         _serfsb++;
         serfboard();
         serfboard();
@@ -105,6 +111,7 @@ void serfjoin() {
         _hackers -= 2;
 
         printf("Serf boarded\n");
+        sleep(1);
         _serfsb++;
         serfboard();
         hackerboard();
@@ -122,6 +129,7 @@ void serfjoin() {
         /* Increments serf count */
         _serfs++;
         printf("Serf enqueued\n");
+        sleep(1);
         showqueue();
 
         /* Releases mutex */
@@ -136,12 +144,14 @@ void hackerjoin() {
     /* Waits if ship is free to join */
     sem_wait(&mutex);
     printf("Hacker joined\n");
+    sleep(3);
 
     /* Verifies boarding count */
     if (_hackers == 3) {
         _hackers -= 3;
 
         printf("Hacker boarded\n");
+        sleep(1);
         _hackersb++;
         hackerboard();
         hackerboard();
@@ -157,6 +167,7 @@ void hackerjoin() {
         _serfs -= 2;
 
         printf("Hacker boarded\n");
+        sleep(1);
         _hackersb++;
         hackerboard();
         serfboard();
@@ -171,6 +182,7 @@ void hackerjoin() {
         /* Increments hacker count */
         _hackers++;
         printf("Hacker enqueued\n");
+        sleep(1);
         showqueue();
 
         /* Releases mutex */
@@ -185,12 +197,13 @@ void hackerjoin() {
 /* Passenger p enters the ship */
 void *entership(void *p) {
     person passenger = *(person*) p;
-    sleep(passenger.waiting);
     if (passenger.type == 0) {
         hackerjoin();
     } else {
         serfjoin();
     }
+
+    printf("Done with %d\n", passenger.id);
 }
 
 int main() {
