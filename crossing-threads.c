@@ -5,25 +5,11 @@
 #include <unistd.h>
 #include <time.h>
 
+#include "crossing.h"
+#include "crossing-threads.h"
+#include "animation.h"
+
 #define N 16
-
-typedef enum person_type {serf, hacker} person_type;
-
-/*
- * Struct to define a new person who will make use of the ship to cross
- * the river 
- */
-typedef struct person {
-
-	person_type type;
-
-	/* Sleep time for thread */
-	int waiting;
-
-	/* Id to identify person */
-	int id;
-} person;
-
 
 /* Mutex semaphore */
 sem_t mutex;
@@ -37,70 +23,115 @@ sem_t _everybody_on_board;
 /* Keeps track of how many serfs and hackers boarded the ship */
 int _serfsb = 0;
 int _hackersb = 0;
-int _totalb=0;
+int _total_crew=0;
 
 /* Keeps track of how many serfs and hackers are enqueued */
 int _serfs = 0;
 int _hackers = 0;
+
+pthread_mutex_t screen_mutex;
+
+screen *my_screen;
+
+int main() {
+
+	if (pthread_mutex_init(&screen_mutex, NULL) != 0){
+		printf("Mutex init failed\n");
+		return 1;
+	}
+
+	my_screen = generate_screen();
+	draw_boat(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL);
+	print_screen(my_screen);
+
+	/* Seeds rand */
+	srand(time(NULL)); 
+
+	pthread_t people[N];
+	person *passenger[N];
+
+	for(int i =0; i < N; i++){
+		passenger[i] = (person*) malloc(sizeof(person));
+	}
+
+	sem_init(&mutex, 0, 1);
+	sem_init(&hacker_queue, 0, 0);
+	sem_init(&serf_queue, 0, 0);
+	sem_init(&_everybody_on_board, 0, 0);
+
+	for (int i = 0 ; i < N ; i++) {
+		newperson(passenger[i], i);
+		pthread_create(&people[i], NULL, (void* (*) (void*)) entership, (void*) passenger[i]);
+	}
+
+	for (int i = 0 ; i < N ; i++) {
+		pthread_join(people[i], NULL);
+	}
+
+	for(int i = 0; i < N; i++){
+		free(passenger[i]);
+	}
+	free_screen(my_screen);
+
+	return 0;
+}
 
 /* Creates a new person */
 void newperson(person *p, int id) {
 
 	int type_aux = rand()%2;
 	p->type = type_aux == 0 ? serf : hacker;
-	//p->waiting = rand() % 10;
-	p->waiting = 5;
 	p->id = id;
 }
 
-/* Simple function to show queue */
-void showqueue() {
-	printf("Serf queue size: %d\n", _serfs);
-	printf("Hacker queue size: %d\n\n", _hackers);
-	//sleep(1);
-}
-
 void setsail() {
-	printf("\n*******************\n");
-	printf("\nSetting sail\n");
-	printf("Hackers: %d\n", _hackersb);
-	printf("Serfs: %d\n", _serfsb);
-	printf("\n*******************\n");
-	//sleep(1);
+
+	pthread_mutex_lock(&screen_mutex);
+	removes_all_boat(my_screen);
+	reprints_screen(my_screen);
+	pthread_mutex_unlock(&screen_mutex);
+
 }
 
 /* Make a person get on board. */
-void board(person *p){
+void board(person *p, int isCapitan){
 
-	if (p->type == hacker){
-		printf("Hacker %d boarded.\n", p->id);
-		//sleep(1);
-		__sync_add_and_fetch(&_hackersb, 1);
-	}
-	else{
-		printf("Serf %d boarded.\n", p->id);
-		//sleep(1);
-		__sync_add_and_fetch(&_serfsb, 1);
-	}
+	if(!isCapitan){
+		int	total = __sync_add_and_fetch(&_total_crew, 1);
 
-	int total = __sync_add_and_fetch(&_totalb, 1);
-	if(total == 4){
-		sem_post(&_everybody_on_board);
+		/* Gets the screen lock, removes person from the queue,
+		 *  adds on the boat and reprints screen */
+		pthread_mutex_lock(&screen_mutex);
+		removes_queue(my_screen, p);
+		adds_boat(my_screen, p, total-1);
+		reprints_screen(my_screen);
+		pthread_mutex_unlock(&screen_mutex);
+
+		/* If threads is the last to get in, wakeup capitan */
+		if(total == 3){
+			sem_post(&_everybody_on_board);
+		}
+	}
+	else {
+		/* Gets the screen lock, adds capitan on the boat
+		 * and reporints screen */
+		pthread_mutex_lock(&screen_mutex);
+		adds_boat(my_screen, p, BOATS_CAPACITY-1);
+		reprints_screen(my_screen);
+		pthread_mutex_unlock(&screen_mutex);
 	}
 
 }
 
+/* Serf function */
 void serfjoin(person *p) {
 	/* Waits if ship is free to join */
 	sem_wait(&mutex);
-	printf("Serf %d joined\n", p->id);
-	//sleep(1);
 
 	if(_serfs == 3 || (_serfs == 1 && _hackers >= 2)){
 
 		if(_serfs == 3){
 			_serfs -= 3;
-			printf("Waking up 3 serfs.\n");
 			sem_post(&serf_queue);
 			sem_post(&serf_queue);
 			sem_post(&serf_queue);
@@ -108,7 +139,6 @@ void serfjoin(person *p) {
 		else{
 			_serfs -= 1;
 			_hackers -= 2;
-			printf("Waking up 2 hackers and 1 serf.\n");
 			sem_post(&serf_queue);
 			sem_post(&hacker_queue);
 			sem_post(&hacker_queue);
@@ -116,12 +146,11 @@ void serfjoin(person *p) {
 
 		/* Multithread from here */
 		/* Wait until everybody go onboard */
-		board(p);
+		board(p, 1);
 		sem_wait(&_everybody_on_board);
-		_totalb=0;
+		_total_crew=0;
 
 		setsail();
-		showqueue();
 
 		_serfsb=0;
 		_hackersb=0;
@@ -134,9 +163,13 @@ void serfjoin(person *p) {
 	else {
 		/* Increments serf count */
 		_serfs++;
-		printf("Serf %d enqueued\n", p->id);
-		//sleep(1);
-		showqueue();
+
+		// TODO: Check if this lock is necessary
+		pthread_mutex_lock(&screen_mutex);
+		adds_queue(my_screen, p);
+		reprints_screen(my_screen);
+		pthread_mutex_unlock(&screen_mutex);
+
 
 		/* Releases mutex */
 		sem_post(&mutex);
@@ -146,22 +179,20 @@ void serfjoin(person *p) {
 
 		/* Multithread from here */
 		/* Serf gets on board when wakes up */
-		board(p);
+		board(p, 0);
 
 	}
 }
 
+/* Hacker function */
 void hackerjoin(person *p) {
 	/* Waits if ship is free to join */
 	sem_wait(&mutex);
-	printf("Hacker %d joined\n", p->id);
-	//sleep(1);
 
 	if(_hackers == 3 || (_hackers == 1 && _serfs >= 2)){
 
 		if(_hackers == 3){
 			_hackers -= 3;
-			printf("Waking up 3 hackers\n");
 			sem_post(&hacker_queue);
 			sem_post(&hacker_queue);
 			sem_post(&hacker_queue);
@@ -169,7 +200,6 @@ void hackerjoin(person *p) {
 		else{
 			_hackers -= 1;
 			_serfs -= 2;
-			printf("Waking up 2 serfs and 1 hacker.\n");
 			sem_post(&hacker_queue);
 			sem_post(&serf_queue);
 			sem_post(&serf_queue);
@@ -177,12 +207,11 @@ void hackerjoin(person *p) {
 
 		/* Multithread from here */
 		/* Wait until everybody go onboard */
-		board(p);
+		board(p, 1);
 		sem_wait(&_everybody_on_board);
-		_totalb=0;
+		_total_crew=0;
 
 		setsail();
-		showqueue();
 
 		_serfsb=0;
 		_hackersb=0;
@@ -195,9 +224,12 @@ void hackerjoin(person *p) {
 	else {
 		/* Increments hacker count */
 		_hackers++;
-		printf("Hacker %d enqueued\n", p->id);
-		//sleep(1);
-		showqueue();
+
+		// TODO: Check if this lock is necessary
+		pthread_mutex_lock(&screen_mutex);
+		adds_queue(my_screen, p);
+		reprints_screen(my_screen);
+		pthread_mutex_unlock(&screen_mutex);
 
 		/* Releases mutex */
 		sem_post(&mutex);
@@ -207,7 +239,7 @@ void hackerjoin(person *p) {
 
 		/* Multithread from here */
 		/* Serf gets on board when wakes up */
-		board(p);
+		board(p, 0);
 
 	}
 
@@ -215,40 +247,25 @@ void hackerjoin(person *p) {
 
 
 /* Passenger p enters the ship */
-void *entership(void *p) {
-	person passenger = *(person*) p;
+void entership(person *p) {
+	person passenger = * p;
 	if (passenger.type == hacker) {
 		hackerjoin((person*)p);
 	} else {
 		serfjoin((person*)p);
 	}
-
-	printf("Done with %d\n", passenger.id);
-	return NULL;
 }
 
-int main() {
+void reprints_screen(screen *screen){
 
-	/* Seeds rand */
-	srand(time(NULL)); 
+	clean_screen(screen);
+	draw_boat(screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL);
+	draw_hackers_queue(screen, HACKERS_POSITION_VERTICAL, HACKERS_POSITION_HORIZONTAL);
+	draw_serfs_queue(screen, SERFS_POSITION_VERTICAL, SERFS_POSITION_HORIZONTAL);
 
-	pthread_t people[N];
-	person passenger[N];
-	int i = 0;
+	delete_screen(screen->height);
 
-	sem_init(&mutex, 0, 1);
-	sem_init(&hacker_queue, 0, 0);
-	sem_init(&serf_queue, 0, 0);
-	sem_init(&_everybody_on_board, 0, 0);
-
-	for (i = 0 ; i < N ; i++) {
-		newperson(&passenger[i], i);
-		pthread_create(&people[i], NULL, entership, (void*) &passenger[i]);
-	}
-
-	for (i = 0 ; i < N ; i++) {
-		pthread_join(people[i], NULL);
-	}
-
-	return 0;
+	print_screen(screen);
+	
+	sleep(1);
 }

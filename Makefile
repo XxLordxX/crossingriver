@@ -1,4 +1,4 @@
 all:
-	gcc crossing.c -o crossing -pthread
+	gcc crossing-threads.c animation.c -o exec -lm -pthread
 clean:
-	rm crossing
+	rm exec
