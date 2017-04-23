@@ -9,7 +9,8 @@
 #include "crossing-threads.h"
 #include "animation.h"
 
-#define N 16
+/* Must be a 4 multiple */
+#define N 4*4
 
 /* Mutex semaphore */
 sem_t mutex;
@@ -36,7 +37,7 @@ screen *my_screen;
 int main() {
 
 	if (pthread_mutex_init(&screen_mutex, NULL) != 0){
-		printf("Mutex init failed\n");
+		printf("screen_mutex init failed\n");
 		return 1;
 	}
 
@@ -79,16 +80,57 @@ int main() {
 /* Creates a new person */
 void newperson(person *p, int id) {
 
-	int type_aux = rand()%2;
-	p->type = type_aux == 0 ? serf : hacker;
+	p->type = semi_rand_type();
 	p->id = id;
+}
+
+/* Random choose the person type, except the last one */
+person_type semi_rand_type(){
+
+	static int total=0;
+	static int hackers=0;
+	static int serfs=0;
+
+	if( total == N-1 ){
+		if( hackers%2 == 1){
+			total++;
+			hackers++;
+	   		return hacker;
+		}
+		else if( serfs%2 == 1){
+			total++;
+			serfs++;
+			return serf;
+		}
+	}
+	
+	int type_aux = rand()%2;
+
+	if(type_aux == 0){
+		serfs++;
+	}
+	else {
+		hackers++;
+	}
+	total++;
+
+	return type_aux == 0 ? serf : hacker;
+
 }
 
 void setsail() {
 
 	pthread_mutex_lock(&screen_mutex);
+
+	for(int i=0; i <= 80; i++){
+		reprints_screen(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL+i, 40000);
+	}
+	usleep(10000);
+
 	removes_all_boat(my_screen);
-	reprints_screen(my_screen);
+	reprints_screen(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL, 30000);
+
+
 	pthread_mutex_unlock(&screen_mutex);
 
 }
@@ -104,7 +146,7 @@ void board(person *p, int isCapitan){
 		pthread_mutex_lock(&screen_mutex);
 		removes_queue(my_screen, p);
 		adds_boat(my_screen, p, total-1);
-		reprints_screen(my_screen);
+		reprints_screen(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL, 1000000);
 		pthread_mutex_unlock(&screen_mutex);
 
 		/* If threads is the last to get in, wakeup capitan */
@@ -117,7 +159,7 @@ void board(person *p, int isCapitan){
 		 * and reporints screen */
 		pthread_mutex_lock(&screen_mutex);
 		adds_boat(my_screen, p, BOATS_CAPACITY-1);
-		reprints_screen(my_screen);
+		reprints_screen(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL, 1000000);
 		pthread_mutex_unlock(&screen_mutex);
 	}
 
@@ -164,10 +206,9 @@ void serfjoin(person *p) {
 		/* Increments serf count */
 		_serfs++;
 
-		// TODO: Check if this lock is necessary
 		pthread_mutex_lock(&screen_mutex);
 		adds_queue(my_screen, p);
-		reprints_screen(my_screen);
+		reprints_screen(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL, 1000000);
 		pthread_mutex_unlock(&screen_mutex);
 
 
@@ -225,10 +266,9 @@ void hackerjoin(person *p) {
 		/* Increments hacker count */
 		_hackers++;
 
-		// TODO: Check if this lock is necessary
 		pthread_mutex_lock(&screen_mutex);
 		adds_queue(my_screen, p);
-		reprints_screen(my_screen);
+		reprints_screen(my_screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL, 1000000);
 		pthread_mutex_unlock(&screen_mutex);
 
 		/* Releases mutex */
@@ -256,10 +296,10 @@ void entership(person *p) {
 	}
 }
 
-void reprints_screen(screen *screen){
+void reprints_screen(screen *screen, int boat_position_vertical, int boat_position_horizontal, int microseconds){
 
 	clean_screen(screen);
-	draw_boat(screen, BOAT_POSITION_VERTICAL, BOAT_POSITION_HORIZONTAL);
+	draw_boat(screen, boat_position_vertical, boat_position_horizontal);
 	draw_hackers_queue(screen, HACKERS_POSITION_VERTICAL, HACKERS_POSITION_HORIZONTAL);
 	draw_serfs_queue(screen, SERFS_POSITION_VERTICAL, SERFS_POSITION_HORIZONTAL);
 
@@ -267,5 +307,5 @@ void reprints_screen(screen *screen){
 
 	print_screen(screen);
 	
-	sleep(1);
+	usleep(microseconds);
 }
